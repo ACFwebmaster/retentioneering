@@ -1,0 +1,83 @@
+{
+  "timestamp": "2025-07-12T01:09:55.140932",
+  "environment": "development",
+  "quick_mode": true,
+  "validation_results": {
+    "imports": {
+      "status": "FAIL",
+      "message": "Import validation failed: Required environment variable AZURE_SQL_SERVER is not set",
+      "error": "Required environment variable AZURE_SQL_SERVER is not set"
+    },
+    "configuration": {
+      "status": "PASS",
+      "message": "Configuration loaded and validated successfully",
+      "environment": "development",
+      "debug_mode": true
+    },
+    "sample_data": {
+      "status": "FAIL",
+      "message": "Sample data missing required columns: ['x', 't_x', 'T']"
+    },
+    "model_creation": {
+      "status": "PASS",
+      "message": "Model creation successful",
+      "models_tested": [
+        "basic",
+        "hierarchical"
+      ]
+    },
+    "model_training": {
+      "status": "FAIL",
+      "message": "Model training failed: Model fitting failed: module 'pymc.math' has no attribute 'gammaln'",
+      "error": "Model fitting failed: module 'pymc.math' has no attribute 'gammaln'"
+    },
+    "visualization": {
+      "status": "FAIL",
+      "message": "Visualization validation failed: cannot import name 'generate_sample_data' from 'src.data.sample_data' (/home/phil/Documents/repos/nonprofit-engagement-model/src/data/sample_data.py)",
+      "error": "cannot import name 'generate_sample_data' from 'src.data.sample_data' (/home/phil/Documents/repos/nonprofit-engagement-model/src/data/sample_data.py)"
+    },
+    "cli_interface": {
+      "status": "PASS",
+      "message": "CLI interface validated successfully"
+    },
+    "docker_configuration": {
+      "status": "PASS",
+      "message": "Docker configuration validated",
+      "checks": {
+        "Dockerfile_exists": true,
+        "Dockerfile_readable": true,
+        "docker-compose.yml_exists": true,
+        "docker-compose.yml_readable": true,
+        "docker-compose.dev.yml_exists": true,
+        "docker-compose.dev.yml_readable": true,
+        ".env.development_exists": true,
+        ".env.production_exists": true
+      }
+    }
+  },
+  "overall_status": "FAIL",
+  "critical_issues": [
+    "Import validation failed: Required environment variable AZURE_SQL_SERVER is not set",
+    "Sample data missing required columns: ['x', 't_x', 'T']",
+    "Model training failed: Model fitting failed: module 'pymc.math' has no attribute 'gammaln'",
+    "Visualization validation failed: cannot import name 'generate_sample_data' from 'src.data.sample_data' (/home/phil/Documents/repos/nonprofit-engagement-model/src/data/sample_data.py)"
+  ],
+  "warnings": [],
+  "recommendations": [
+    "\ud83d\udea8 CRITICAL: Address all critical issues before production deployment",
+    "\u26a0\ufe0f Success rate is 50.0% - aim for >90% before production",
+    "\ud83c\udfc3 Quick mode used - run full validation before production deployment",
+    "\ud83d\udcda Review all documentation for completeness",
+    "\ud83e\uddea Consider implementing automated testing pipeline",
+    "\ud83d\udd04 Set up continuous integration/deployment",
+    "\ud83d\udcc8 Monitor system performance in production"
+  ],
+  "summary": {
+    "total_validation_time_seconds": 3.26,
+    "steps_passed": 4,
+    "total_steps": 8,
+    "success_rate": 50.0,
+    "critical_issues_count": 4,
+    "warnings_count": 0
+  }
+}

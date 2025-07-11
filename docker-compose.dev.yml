@@ -1,0 +1,337 @@
+# =============================================================================
+# Development Docker Compose Override
+# =============================================================================
+# This file provides development-specific overrides for the main docker-compose.yml
+# It enables hot reloading, debugging, and development-friendly configurations.
+#
+# Usage:
+#   docker-compose -f docker-compose.yml -f docker-compose.dev.yml up
+# =============================================================================
+
+version: '3.8'
+
+# =============================================================================
+# Service Overrides for Development
+# =============================================================================
+services:
+  # ---------------------------------------------------------------------------
+  # Application Service - Development Configuration
+  # ---------------------------------------------------------------------------
+  app:
+    build:
+      target: development
+      args:
+        BUILD_DATE: ${BUILD_DATE:-}
+        VERSION: ${VERSION:-dev}
+        VCS_REF: ${VCS_REF:-dev}
+    image: nonprofit-engagement-model:dev
+    container_name: nonprofit-engagement-app-dev
+    
+    # Development environment
+    env_file:
+      - .env.development
+    environment:
+      - ENVIRONMENT=development
+      - DEBUG=True
+      - DEV_MODE=True
+      - CONTAINER_NAME=nonprofit-engagement-app-dev
+      - PYTHONPATH=/app
+    
+    # Development port mapping (additional ports)
+    ports:
+      - "${APP_PORT:-8000}:8000"
+      - "${JUPYTER_PORT:-8888}:8888"
+      - "${DEBUG_PORT:-5678}:5678"  # Python debugger
+    
+    # Development volume mounts (enable hot reloading)
+    volumes:
+      # Source code mounting for hot reloading
+      - ./src:/app/src:rw
+      - ./scripts:/app/scripts:rw
+      - ./notebooks:/app/notebooks:rw
+      - ./tests:/app/tests:rw
+      - ./pyproject.toml:/app/pyproject.toml:ro
+      
+      # Data volumes (development)
+      - ./data:/app/data:rw
+      - ./models:/app/models:rw
+      - ./logs:/app/logs:rw
+      - ./outputs:/app/outputs:rw
+      
+      # Development configuration
+      - ./.env.development:/app/.env:ro
+      
+      # Git repository (for development tools)
+      - ./.git:/app/.git:ro
+    
+    # Development command (with hot reloading)
+    command: >
+      sh -c "
+        echo 'Starting development environment...' &&
+        poetry install --with dev &&
+        poetry run python -m src.main --reload
+      "
+    
+    # Remove resource limits for development
+    deploy:
+      resources:
+        limits:
+          cpus: '4.0'
+          memory: 8G
+    
+    # Development-specific health check (more lenient)
+    healthcheck:
+      test: ["CMD", "python", "-c", "print('Development health check')"]
+      interval: 60s
+      timeout: 30s
+      retries: 2
+      start_period: 120s
+    
+    # Enable debugging capabilities
+    cap_add:
+      - SYS_PTRACE
+    security_opt:
+      - seccomp:unconfined
+    
+    # Development logging (more verbose)
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "50m"
+        max-file: "5"
+        labels: "service=nonprofit-engagement-app-dev"
+
+  # ---------------------------------------------------------------------------
+  # Jupyter Notebook Service (Development Only)
+  # ---------------------------------------------------------------------------
+  jupyter:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: development
+    image: nonprofit-engagement-model:dev
+    container_name: nonprofit-engagement-jupyter
+    
+    # Jupyter-specific environment
+    env_file:
+      - .env.development
+    environment:
+      - ENVIRONMENT=development
+      - JUPYTER_ENABLE_LAB=yes
+      - JUPYTER_TOKEN=${JUPYTER_TOKEN:-dev-token-123}
+    
+    # Jupyter port
+    ports:
+      - "${JUPYTER_PORT:-8888}:8888"
+    
+    # Mount source code and notebooks
+    volumes:
+      - ./src:/app/src:rw
+      - ./notebooks:/app/notebooks:rw
+      - ./data:/app/data:rw
+      - ./models:/app/models:rw
+      - ./outputs:/app/outputs:rw
+    
+    # Jupyter command
+    command: >
+      sh -c "
+        poetry install --with dev &&
+        poetry run jupyter lab 
+          --ip=0.0.0.0 
+          --port=8888 
+          --no-browser 
+          --allow-root 
+          --notebook-dir=/app/notebooks
+          --ServerApp.token='${JUPYTER_TOKEN:-dev-token-123}'
+          --ServerApp.password=''
+      "
+    
+    # Working directory
+    working_dir: /app
+    
+    # Networks
+    networks:
+      - app_network
+
+  # ---------------------------------------------------------------------------
+  # Development Database (SQLite/PostgreSQL)
+  # ---------------------------------------------------------------------------
+  dev_db:
+    image: postgres:15-alpine
+    container_name: nonprofit-engagement-dev-db
+    
+    # Development database configuration
+    environment:
+      - POSTGRES_DB=${DEV_DB_NAME:-nonprofit_engagement_dev}
+      - POSTGRES_USER=${DEV_DB_USER:-dev_user}
+      - POSTGRES_PASSWORD=${DEV_DB_PASSWORD:-dev_password_123}
+      - POSTGRES_INITDB_ARGS=--auth-host=scram-sha-256
+    
+    # Database port
+    ports:
+      - "${DEV_DB_PORT:-5432}:5432"
+    
+    # Development database volume
+    volumes:
+      - dev_db_data:/var/lib/postgresql/data
+      - ./scripts/sql:/docker-entrypoint-initdb.d:ro
+    
+    # Health check
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DEV_DB_USER:-dev_user} -d ${DEV_DB_NAME:-nonprofit_engagement_dev}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    
+    # Networks
+    networks:
+      - app_network
+
+  # ---------------------------------------------------------------------------
+  # Redis Override (Development Configuration)
+  # ---------------------------------------------------------------------------
+  redis:
+    # Development Redis configuration (less restrictive)
+    command: >
+      redis-server
+      --requirepass ${REDIS_PASSWORD:-dev_redis_password}
+      --maxmemory 128mb
+      --maxmemory-policy allkeys-lru
+      --save ""
+    
+    # Expose Redis port for development tools
+    ports:
+      - "${REDIS_PORT:-6379}:6379"
+
+  # ---------------------------------------------------------------------------
+  # Development Tools and Utilities
+  # ---------------------------------------------------------------------------
+  mailhog:
+    image: mailhog/mailhog:latest
+    container_name: nonprofit-engagement-mailhog
+    
+    # MailHog ports
+    ports:
+      - "${MAILHOG_SMTP_PORT:-1025}:1025"  # SMTP
+      - "${MAILHOG_WEB_PORT:-8025}:8025"   # Web UI
+    
+    # Networks
+    networks:
+      - app_network
+
+  # Development file watcher (for auto-restart)
+  watcher:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: development
+    image: nonprofit-engagement-model:dev
+    container_name: nonprofit-engagement-watcher
+    
+    # Environment
+    env_file:
+      - .env.development
+    
+    # Watch for file changes
+    volumes:
+      - ./src:/app/src:ro
+      - ./scripts:/app/scripts:ro
+    
+    # File watcher command
+    command: >
+      sh -c "
+        poetry install --with dev &&
+        poetry run watchdog tricks.yaml
+      "
+    
+    # Working directory
+    working_dir: /app
+    
+    # Networks
+    networks:
+      - app_network
+    
+    # Depends on main app
+    depends_on:
+      - app
+
+  # ---------------------------------------------------------------------------
+  # Code Quality Tools (Development)
+  # ---------------------------------------------------------------------------
+  linter:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: development
+    image: nonprofit-engagement-model:dev
+    container_name: nonprofit-engagement-linter
+    
+    # Mount source code
+    volumes:
+      - ./src:/app/src:ro
+      - ./scripts:/app/scripts:ro
+      - ./tests:/app/tests:ro
+    
+    # Linting command
+    command: >
+      sh -c "
+        poetry install --with dev &&
+        echo 'Running code quality checks...' &&
+        poetry run black --check src/ scripts/ &&
+        poetry run isort --check-only src/ scripts/ &&
+        poetry run flake8 src/ scripts/ &&
+        poetry run mypy src/
+      "
+    
+    # Working directory
+    working_dir: /app
+    
+    # Run once and exit
+    profiles:
+      - tools
+
+# =============================================================================
+# Development Networks
+# =============================================================================
+networks:
+  app_network:
+    # Development network configuration
+    driver: bridge
+    name: nonprofit_engagement_dev_network
+
+# =============================================================================
+# Development Volumes
+# =============================================================================
+volumes:
+  # Development database volume
+  dev_db_data:
+    driver: local
+    name: nonprofit_dev_db_data
+
+# =============================================================================
+# Development Configuration Notes
+# =============================================================================
+# 1. Hot Reloading:
+#    - Source code is mounted as volumes for instant updates
+#    - Application automatically restarts on code changes
+#
+# 2. Development Services:
+#    - Jupyter Lab available at http://localhost:8888
+#    - MailHog for email testing at http://localhost:8025
+#    - PostgreSQL database for local development
+#
+# 3. Debugging:
+#    - Python debugger port 5678 exposed
+#    - Enhanced logging and error reporting
+#    - Development-friendly health checks
+#
+# 4. Code Quality:
+#    - Run linting with: docker-compose --profile tools run linter
+#    - File watcher for automatic code quality checks
+#
+# 5. Usage Examples:
+#    - Start development: docker-compose -f docker-compose.yml -f docker-compose.dev.yml up
+#    - Run tests: docker-compose -f docker-compose.yml -f docker-compose.dev.yml run app poetry run pytest
+#    - Access Jupyter: http://localhost:8888 (token: dev-token-123)
+#    - Check emails: http://localhost:8025
+# =============================================================================
