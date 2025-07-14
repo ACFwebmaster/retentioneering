@@ -61,6 +61,18 @@ class SixMonthRetentionProcessor:
         """
         logger.info("Starting 6-month retention calculation")
         
+        # Store period metadata for labeling logic
+        self.analysis_periods = {
+            'reference_period': {
+                'start': last_period_start,
+                'end': last_period_end
+            },
+            'following_period': {
+                'start': following_period_start,
+                'end': following_period_end
+            }
+        }
+
         try:
             # Step 1: Filter eventstream for analysis period
             filtered_stream = self._filter_eventstream_for_analysis(
@@ -251,66 +263,71 @@ class SixMonthRetentionProcessor:
         non_retained_supporters: set
     ) -> Eventstream:
         """
-        Create a labeled eventstream by manually adding retention events.
-        
-        This approach avoids the complex retentioneering processors that were
-        causing the schema errors and IntCastingNaNError.
-        
-        Args:
-            stream: Base eventstream
-            retained_supporters: Set of supporter IDs who were retained
-            non_retained_supporters: Set of supporter IDs who were not retained
-            
-        Returns:
-            Eventstream with retention labels added
+        Create a labeled eventstream by adding a 'retained' or 'not_retained' event 
+        based on supporter activity in the following period.
         """
         logger.debug("Creating simple labeled eventstream")
         
-        # Get base dataframe
         df = stream.to_dataframe().copy()
         schema = stream.schema
         
-        # Get last event time per supporter
-        last_event_time = df.groupby(schema.user_id)[schema.event_timestamp].max()
-
+        # Ensure clean types before filtering
+        df = self._ensure_clean_data_types(df, schema)
+        
         # Create retention events manually
         retention_events = []
+
+        # Extract timestamp boundaries from analysis_periods if available
+        following_period_start = self.analysis_periods["following_period"]["start"]
+        following_period_end = self.analysis_periods["following_period"]["end"]
         
-        # Add positive retention events
-        for supporter_id in retained_supporters:
-            if supporter_id in last_event_time:
-                retention_events.append({
-                    schema.user_id: supporter_id,
-                    schema.event_name: 'positive_target_retained',
-                    schema.event_timestamp: last_event_time[supporter_id] + timedelta(seconds=1)
-                })
+        # Only need events from the following period for retained supporters
+        following_period_df = df[
+            (df[schema.event_timestamp] >= following_period_start) &
+            (df[schema.event_timestamp] <= following_period_end)
+        ]
+
+        # Get first event per retained supporter in the following period
+        first_following_actions = (
+            following_period_df[following_period_df[schema.user_id].isin(retained_supporters)]
+            .sort_values(by=[schema.user_id, schema.event_timestamp])
+            .groupby(schema.user_id)
+            .first()
+            .reset_index()
+        )
+
+        for _, row in first_following_actions.iterrows():
+            retention_events.append({
+                schema.user_id: row[schema.user_id],
+                schema.event_name: 'retained',
+                schema.event_timestamp: row[schema.event_timestamp]
+            })
+
+        # Add artificial event just after the last event for non-retained supporters
+        full_df_last_event_time = df.groupby(schema.user_id)[schema.event_timestamp].max()
         
-        # Add negative retention events
         for supporter_id in non_retained_supporters:
-            if supporter_id in last_event_time:
+            if supporter_id in full_df_last_event_time:
                 retention_events.append({
                     schema.user_id: supporter_id,
-                    schema.event_name: 'negative_target_not_retained',
-                    schema.event_timestamp: last_event_time[supporter_id] + timedelta(seconds=2)
+                    schema.event_name: 'not_retained',
+                    schema.event_timestamp: full_df_last_event_time[supporter_id] + timedelta(seconds=1)
                 })
-        
-        # Combine original events with retention events
+
+        # Combine events
         if retention_events:
             retention_df = pd.DataFrame(retention_events)
             combined_df = pd.concat([df, retention_df], ignore_index=True)
         else:
-            combined_df = df.copy()
-        
-        # Sort by timestamp
+            combined_df = df
+
+        # Sort and clean
         combined_df = combined_df.sort_values(schema.event_timestamp).reset_index(drop=True)
-        
-        # Ensure clean data types
         combined_df = self._ensure_clean_data_types(combined_df, schema)
-        
+
         logger.debug(f"Created labeled eventstream with {len(retention_events)} retention events")
-        
-        # Create new eventstream
-        return Eventstream(combined_df, schema=schema, add_start_end_events=False)
+
+        return Eventstream(combined_df, schema=schema, add_start_end_events=False).add_positive_events(targets=['retained'])
 
 
 def create_sample_retention_data(n_supporters: int = 200) -> pd.DataFrame:
